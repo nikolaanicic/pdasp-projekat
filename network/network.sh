@@ -449,8 +449,8 @@ function createChannel() {
   # create the channel artifacts
   #scripts/createChannel.sh $CHANNEL_NAME $CLI_DELAY $MAX_RETRY $VERBOSE
 
-  scripts/createChannel.sh channel1 $CLI_DELAY $MAX_RETRY $VERBOSE
-  scripts/createChannel.sh channel2  $CLI_DELAY $MAX_RETRY $VERBOSE
+  scripts/createChannel.sh tradechannel1 $CLI_DELAY $MAX_RETRY $VERBOSE
+  scripts/createChannel.sh tradechannel2  $CLI_DELAY $MAX_RETRY $VERBOSE
 }
 
 
@@ -501,7 +501,7 @@ MAX_RETRY=5
 # default for delay between commands
 CLI_DELAY=3
 # channel name defaults to "mychannel"
-CHANNEL_NAME="channel1"
+CHANNEL_NAME="tradechannel1"
 # chaincode name defaults to "NA"
 CC_NAME="NA"
 # chaincode path defaults to "NA"

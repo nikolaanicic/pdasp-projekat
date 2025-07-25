@@ -2,6 +2,7 @@ module chaincode
 
 go 1.21.6
 
+
 require (
 	github.com/golang/protobuf v1.5.4
 	github.com/google/uuid v1.6.0

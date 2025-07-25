@@ -2,7 +2,7 @@
 
 source scripts/utils.sh
 
-CHANNEL_NAME=${1:-"channel1"}
+CHANNEL_NAME=${1:-"tradechannel"}
 CC_NAME=${2:-"traderchaincode"}
 CC_SRC_PATH=${3}
 CC_SRC_LANGUAGE=${4}
@@ -316,5 +316,7 @@ if [ "$CC_INIT_FCN" = "NA" ]; then
 else
   chaincodeInvokeInit $orgs
 fi
+
+peer channel list
 
 exit 0

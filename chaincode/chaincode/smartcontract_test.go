@@ -5,11 +5,14 @@ import (
 	"chaincode/models"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/hyperledger/fabric-protos-go/ledger/queryresult"
+
+	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,15 +113,15 @@ func TestDeleteModel(t *testing.T) {
 	chaincodeStub.GetStateReturns(bytes, nil)
 	chaincodeStub.DelStateReturns(nil)
 	assetTransfer := SmartContract{}
-	err = assetTransfer.DeleteModel(transactionContext, "")
+	err = assetTransfer.DeleteProduct(transactionContext, "")
 	require.NoError(t, err)
 
 	chaincodeStub.GetStateReturns(nil, nil)
-	err = assetTransfer.DeleteModel(transactionContext, id)
+	err = assetTransfer.DeleteProduct(transactionContext, id)
 	require.Error(t, err)
 
 	chaincodeStub.GetStateReturns(nil, fmt.Errorf("unable to retrieve asset"))
-	err = assetTransfer.DeleteModel(transactionContext, "")
+	err = assetTransfer.DeleteProduct(transactionContext, "")
 	require.Error(t, err)
 }
 
@@ -139,12 +142,7 @@ func TestBuyProduct(t *testing.T) {
 		AccountBalance: 100,
 		ReceiptsID:     []string{},
 	}
-	trader := models.Trader{
-		ID:             "t1",
-		PIB:            "123456",
-		AccountBalance: 100,
-		Receipts:       []string{},
-	}
+
 	product := models.Product{
 		ID:             "p1",
 		Name:           "Product",
@@ -154,14 +152,37 @@ func TestBuyProduct(t *testing.T) {
 		Quantity:       2,
 	}
 
-	userBytes, _ := json.Marshal(user)
-	traderBytes, _ := json.Marshal(trader)
-	productBytes, _ := json.Marshal(product)
+	storedUser := models.User{
+		ID:             "USER-u1",
+		Name:           "User",
+		LastName:       "Test",
+		Email:          "user@test.com",
+		AccountBalance: 100,
+		ReceiptsID:     []string{},
+	}
+	storedProduct := models.Product{
+		ID:             "PRODUCT-p1",
+		Name:           "Product",
+		TraderID:       "t1",
+		ExpirationDate: time.Now().Format(time.RFC3339),
+		Price:          10,
+		Quantity:       2,
+	}
+	storedTrader := models.Trader{
+		ID:             "TRADER-t1",
+		PIB:            "123456",
+		AccountBalance: 100,
+		Receipts:       []string{},
+	}
+
+	userBytes, _ := json.Marshal(storedUser)
+	traderBytes, _ := json.Marshal(storedTrader)
+	productBytes, _ := json.Marshal(storedProduct)
 
 	state := map[string][]byte{
-		user.ID:    userBytes,
-		trader.ID:  traderBytes,
-		product.ID: productBytes,
+		storedUser.ID:    userBytes,
+		storedTrader.ID:  traderBytes,
+		storedProduct.ID: productBytes,
 	}
 
 	stub.GetStateStub = func(key string) ([]byte, error) {
@@ -182,9 +203,9 @@ func TestBuyProduct(t *testing.T) {
 	var updatedUser models.User
 	var updatedTrader models.Trader
 	var updatedProduct models.Product
-	require.NoError(t, json.Unmarshal(state[user.ID], &updatedUser))
-	require.NoError(t, json.Unmarshal(state[trader.ID], &updatedTrader))
-	require.NoError(t, json.Unmarshal(state[product.ID], &updatedProduct))
+	require.NoError(t, json.Unmarshal(state[storedUser.ID], &updatedUser))
+	require.NoError(t, json.Unmarshal(state[storedTrader.ID], &updatedTrader))
+	require.NoError(t, json.Unmarshal(state[storedProduct.ID], &updatedProduct))
 
 	require.Equal(t, uint(90), updatedUser.AccountBalance)
 	require.Equal(t, uint(110), updatedTrader.AccountBalance)
@@ -238,4 +259,165 @@ func TestQueryProducts(t *testing.T) {
 	queryArg := stub.GetQueryResultArgsForCall(0)
 	expectedQuery := `{"selector":{"name":{"$eq":"Apple"},"trader_id":{"$eq":"t1"}}}`
 	require.JSONEq(t, expectedQuery, queryArg)
+}
+
+func TestGetAllProducts(t *testing.T) {
+	sc := SmartContract{}
+	stub := new(mocks.ChaincodeStub)
+	ctx := new(mocks.TransactionContext)
+	iterator := new(mocks.StateQueryIterator)
+
+	products := []models.Product{
+		{ID: "PRODUCT-p1", Name: "p1", Price: 10, TraderID: "t1"},
+		{ID: "PRODUCT-p2", Name: "p2", Price: 10, TraderID: "t2"},
+		{ID: "PRODUCT-p3", Name: "p3", Price: 10, TraderID: "t3"},
+	}
+
+	for i, obj := range products {
+		bts, err := json.Marshal(obj)
+		require.NoError(t, err)
+
+		iterator.HasNextReturnsOnCall(i, true)
+		iterator.NextReturnsOnCall(i, &queryresult.KV{
+			Key:   obj.ID,
+			Value: bts,
+		}, nil)
+	}
+	iterator.HasNextReturnsOnCall(len(products), false)
+
+	stub.GetQueryResultStub = func(query string) (shim.StateQueryIteratorInterface, error) {
+		return iterator, nil
+	}
+
+	ctx.GetStubReturns(stub)
+
+	// Run function under test
+	results, err := sc.GetAllProducts(ctx)
+
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+
+	// Ensure each returned item is a valid PRODUCT
+	for i := 0; i < 3; i++ {
+		require.True(t, strings.HasPrefix(results[i].ID, "PRODUCT"))
+		require.Equal(t, products[i].ID, results[i].ID)
+		require.Equal(t, products[i].Name, results[i].Name)
+	}
+}
+
+func TestBuildQueryIdStartsWith_Product(t *testing.T) {
+	prefix := "PRODUCT"
+	query := models.BuildQueryIdStartsWith(prefix)
+
+	require.Contains(t, query, `"selector":`)
+	require.Contains(t, query, `"$regex":"^(PRODUCT-)"`) // regex for PRODUCT prefix
+}
+
+func TestGetAllProducts_FiltersOnlyProducts(t *testing.T) {
+	sc := SmartContract{}
+	stub := new(mocks.ChaincodeStub)
+	ctx := new(mocks.TransactionContext)
+
+	// Prepare test data: products and a non-product entry
+	products := []models.Product{
+		{ID: "PRODUCT-p1", Name: "p1", Price: 10, TraderID: "t1"},
+		{ID: "PRODUCT-p2", Name: "p2", Price: 20, TraderID: "t2"},
+	}
+	nonProduct := models.Product{ID: "TRADER-t1", Name: "not a product", Price: 0, TraderID: "t0"}
+
+	state := map[string][]byte{}
+	for _, p := range products {
+		b, err := json.Marshal(p)
+		require.NoError(t, err)
+		state[p.ID] = b
+	}
+	b, err := json.Marshal(nonProduct)
+	require.NoError(t, err)
+	state[nonProduct.ID] = b
+
+	// Setup the iterator to only return the product entries
+	iterator := new(mocks.StateQueryIterator)
+	callCount := 0
+	keys := []string{"PRODUCT-p1", "PRODUCT-p2"}
+
+	iterator.HasNextStub = func() bool {
+		return callCount < len(keys)
+	}
+	iterator.NextStub = func() (*queryresult.KV, error) {
+		key := keys[callCount]
+		val := state[key]
+		callCount++
+		return &queryresult.KV{Key: key, Value: val}, nil
+	}
+	iterator.CloseReturns(nil)
+
+	stub.GetQueryResultStub = func(query string) (shim.StateQueryIteratorInterface, error) {
+		return iterator, nil
+	}
+
+	ctx.GetStubReturns(stub)
+
+	results, err := sc.GetAllProducts(ctx)
+	require.NoError(t, err)
+	require.Len(t, results, len(products))
+
+	for i, product := range products {
+		require.Equal(t, product.ID, results[i].ID)
+		require.Equal(t, product.Name, results[i].Name)
+		require.Equal(t, product.Price, results[i].Price)
+		require.Equal(t, product.TraderID, results[i].TraderID)
+	}
+}
+
+func TestGetAllUsers_FiltersOnlyUsers(t *testing.T) {
+	sc := SmartContract{}
+	stub := new(mocks.ChaincodeStub)
+	ctx := new(mocks.TransactionContext)
+
+	products := []models.User{
+		{ID: "USER-p1", Name: "p1", AccountBalance: 10, LastName: "t1", Email: "t2@gmail.com"},
+		{ID: "USER-p2", Name: "p2", AccountBalance: 20, LastName: "t2", Email: "t2@gmail.com"},
+	}
+	nonProduct := models.User{ID: "TRADER-t1", Name: "not a user", AccountBalance: 0, Email: "t0"}
+
+	state := map[string][]byte{}
+	for _, p := range products {
+		b, err := json.Marshal(p)
+		require.NoError(t, err)
+		state[p.ID] = b
+	}
+	b, err := json.Marshal(nonProduct)
+	require.NoError(t, err)
+	state[nonProduct.ID] = b
+
+	iterator := new(mocks.StateQueryIterator)
+	callCount := 0
+	keys := []string{"USER-p1", "USER-p2"}
+
+	iterator.HasNextStub = func() bool {
+		return callCount < len(keys)
+	}
+	iterator.NextStub = func() (*queryresult.KV, error) {
+		key := keys[callCount]
+		val := state[key]
+		callCount++
+		return &queryresult.KV{Key: key, Value: val}, nil
+	}
+	iterator.CloseReturns(nil)
+
+	stub.GetQueryResultStub = func(query string) (shim.StateQueryIteratorInterface, error) {
+		return iterator, nil
+	}
+
+	ctx.GetStubReturns(stub)
+
+	results, err := sc.GetAllUsers(ctx)
+	require.NoError(t, err)
+	require.Len(t, results, len(products))
+
+	for i, product := range products {
+		require.Equal(t, product.ID, results[i].ID)
+		require.Equal(t, product.Name, results[i].Name)
+		require.Equal(t, product.AccountBalance, results[i].AccountBalance)
+	}
 }
