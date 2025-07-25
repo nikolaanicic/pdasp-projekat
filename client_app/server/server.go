@@ -3,6 +3,8 @@ package server
 import (
 	"clientapp/config"
 	"clientapp/handler"
+	"clientapp/jwt"
+	"clientapp/models"
 	"fmt"
 	"log"
 	"net/http"
@@ -52,6 +54,10 @@ func (s *Server) createRoutersAndSetRoutes() error {
 
 	router.POST("/login", handler.Login)
 
+	router.Use(jwt.AuthenticationMiddleware())
+	router.GET("/products/:channel", jwt.AuthorizationMiddleware(models.USER), handler.GetAllProducts)
+	router.POST("/users/:channel", jwt.AuthorizationMiddleware(models.ADMIN), handler.AddUser)
+	router.POST("/product/buy/:product_id/:channel", jwt.AuthorizationMiddleware(models.USER), handler.BuyProduct)
 	s.Router = router
 	return nil
 }

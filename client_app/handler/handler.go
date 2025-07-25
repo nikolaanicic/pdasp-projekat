@@ -6,7 +6,7 @@ import (
 	"clientapp/dto"
 	"clientapp/jwt"
 	"clientapp/models"
-	"clientapp/utils"
+	"encoding/json"
 	"log"
 	"net/http"
 
@@ -14,7 +14,7 @@ import (
 )
 
 type Handler struct {
-	users              map[string]models.UserInfo
+	users              map[string]*models.UserInfo
 	installedChainCode map[string]string
 }
 
@@ -74,12 +74,14 @@ func (h *Handler) Login(ctx *gin.Context) {
 		return
 	}
 
-	if err := h.logInUser(&userInfo); err != nil {
+	if err := h.logInUser(userInfo); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"status": "failed to connect to the chain"})
 		return
 	}
 
-	log.Println(userInfo)
+	log.Println(userInfo.ChannelInterfaces["tradechannel1"])
+	log.Println(userInfo.ChannelInterfaces["tradechannel2"])
+
 	ctx.JSON(http.StatusOK, gin.H{"token": token})
 }
 
@@ -99,32 +101,13 @@ func (h *Handler) InitLedger(ctx *gin.Context) {
 		return
 	}
 
-	chainCodeId := h.installedChainCode[channel]
-
-	wallet, err := utils.CreateWallet(user_id, userInfo.Organization)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, failedToCreatePopulateWalletError)
-		return
+	chi, ok := userInfo.ChannelInterfaces[channel]
+	if !ok {
+		ctx.JSON(http.StatusNotFound, gin.H{"status": "channel doesn't exist"})
 	}
-
-	gateway, err := utils.ConnectToGateway(wallet, userInfo.Organization)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, failedToConnectGateway)
-		return
-	}
-
-	defer gateway.Close()
-
-	network, err := gateway.GetNetwork(channel)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, failedToGetGatewayNetwork)
-		return
-	}
-
-	contract := network.GetContract(chainCodeId)
 	log.Println("[HANDLER] [SUBMIT TX] InitLedger")
 
-	if _, err := contract.SubmitTransaction("InitLedger"); err != nil {
+	if _, err := chi.Contract.SubmitTransaction("InitLedger"); err != nil {
 		ctx.JSON(http.StatusInternalServerError, failedToSubmitTx)
 		return
 	}
@@ -133,5 +116,152 @@ func (h *Handler) InitLedger(ctx *gin.Context) {
 }
 
 func (h *Handler) GetAllProducts(ctx *gin.Context) {
+	userIdEntry, ok := ctx.Get("user_id")
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, jwt.BadRequestNoAuthParamsError)
+		return
+	}
+
+	user_id := userIdEntry.(string)
+	userInfo := h.users[user_id]
+
+	channel := ctx.Param("channel")
+	if channel == "" {
+		ctx.JSON(http.StatusBadRequest, missingChannelError)
+		return
+	}
+
+	chi, ok := userInfo.ChannelInterfaces[channel]
+	if !ok || chi == nil {
+		log.Println(ok, chi)
+		ctx.JSON(http.StatusNotFound, gin.H{"status": "channel doesn't exist"})
+		return
+	}
+
+	log.Println("[HANDLER] [SUBMIT TX] GetAllProducts")
+	response, err := chi.Contract.SubmitTransaction("GetAllProducts")
+
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, failedToSubmitTx)
+		return
+	}
+
+	if response == nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"status": "failed to invoke the chain"})
+	}
+
+	var products []models.Product
+	err = json.Unmarshal(response, &products)
+	if err != nil {
+		log.Fatalf("Failed to unmarshal response: %v", err)
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"data": products})
+}
+
+func (h *Handler) AddUser(ctx *gin.Context) {
+
+	userIdEntry, ok := ctx.Get("user_id")
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, jwt.BadRequestNoAuthParamsError)
+		return
+	}
+	adminId := userIdEntry.(string)
+	adminUserInfo := h.users[adminId]
+
+	channel := ctx.Param("channel")
+	if channel == "" {
+		ctx.JSON(http.StatusBadRequest, missingChannelError)
+		return
+	}
+
+	chi, ok := adminUserInfo.ChannelInterfaces[channel]
+	if !ok || chi == nil {
+		log.Println(ok, chi)
+		ctx.JSON(http.StatusNotFound, gin.H{"status": "channel doesn't exist"})
+		return
+	}
+
+	var user dto.UserCreateDto
+	if err := ctx.ShouldBindJSON(&user); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "couldn't resolve body"})
+		return
+	}
+
+	if _, ok := h.users[user.ID]; ok {
+		ctx.JSON(http.StatusConflict, gin.H{"status": "user already exists"})
+		return
+	}
+
+	newUserInfo := models.UserInfo{
+		UserID:            user.ID,
+		Organization:      adminUserInfo.Organization,
+		Role:              models.USER,
+		ChannelInterfaces: make(map[string]*channelinterface.ChannelInterace, 0),
+	}
+
+	h.users[user.ID] = &newUserInfo
+	log.Println("[HANDLER] [SUBMIT TX] CreateUser")
+
+	newUser := models.User{
+		ID:             user.ID,
+		Name:           user.Name,
+		LastName:       user.LastName,
+		Email:          user.Email,
+		AccountBalance: user.AccountBalance,
+		ReceiptsID:     make([]string, 0),
+	}
+
+	newUserBytes, _ := json.Marshal(newUser)
+	_, err := chi.Contract.SubmitTransaction("CreateUser", string(newUserBytes))
+
+	if err != nil {
+		log.Println("[ERROR]", err)
+		ctx.JSON(http.StatusInternalServerError, failedToSubmitTx)
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"status": "user created"})
+
+}
+
+func (h *Handler) BuyProduct(ctx *gin.Context) {
+	userIdEntry, ok := ctx.Get("user_id")
+	if !ok {
+		ctx.JSON(http.StatusUnauthorized, jwt.BadRequestNoAuthParamsError)
+		return
+	}
+	user_id := userIdEntry.(string)
+	userInfo := h.users[user_id]
+
+	channel := ctx.Param("channel")
+	if channel == "" {
+		ctx.JSON(http.StatusBadRequest, missingChannelError)
+		return
+	}
+
+	product_id := ctx.Param("product_id")
+	if product_id == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"status": "missing product_id"})
+		return
+	}
+
+	chi, ok := userInfo.ChannelInterfaces[channel]
+	if !ok || chi == nil {
+		log.Println(ok, chi)
+		ctx.JSON(http.StatusNotFound, gin.H{"status": "channel doesn't exist"})
+		return
+	}
+
+	log.Println("[HANDLER] [SUBMIT TX] BuyProduct")
+	_, err := chi.Contract.SubmitTransaction("BuyProduct", product_id, user_id)
+
+	if err != nil {
+		log.Println("[ERROR]", err)
+		ctx.JSON(http.StatusInternalServerError, failedToSubmitTx)
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{"status": "success"})
 
 }

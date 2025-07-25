@@ -23,11 +23,9 @@ func AuthenticationMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Set the claims for further usage
 		ctx.Set("user_id", claims["user_id"].(string))
 		ctx.Set("role", claims["role"].(string))
 
-		// Continue to the next middleware or handler
 		ctx.Next()
 	}
 }

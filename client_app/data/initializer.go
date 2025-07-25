@@ -5,9 +5,9 @@ import (
 	"clientapp/models"
 )
 
-func GetInitialUsers() map[string]models.UserInfo {
+func GetInitialUsers() map[string]*models.UserInfo {
 
-	return map[string]models.UserInfo{
+	return map[string]*models.UserInfo{
 		"jj1": {UserID: "jj1", Organization: "org1", Role: models.USER, ChannelInterfaces: make(map[string]*channelinterface.ChannelInterace, 0)},
 		"it1": {UserID: "it1", Organization: "org2", Role: models.USER, ChannelInterfaces: make(map[string]*channelinterface.ChannelInterace, 0)},
 		"ou1": {UserID: "ou1", Organization: "org3", Role: models.USER, ChannelInterfaces: make(map[string]*channelinterface.ChannelInterace, 0)},
