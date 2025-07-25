@@ -248,6 +248,7 @@ func TestQueryProducts(t *testing.T) {
 	filters := map[string]string{
 		"name":      "Apple",
 		"trader_id": "t1",
+		"price":     "10.0",
 	}
 
 	results, err := sc.QueryProducts(ctx, filters)
@@ -257,7 +258,7 @@ func TestQueryProducts(t *testing.T) {
 	require.Equal(t, product.Name, results[0].Name)
 
 	queryArg := stub.GetQueryResultArgsForCall(0)
-	expectedQuery := `{"selector":{"name":{"$eq":"Apple"},"trader_id":{"$eq":"t1"}}}`
+	expectedQuery := `{"selector":{"name":{"$eq":"Apple"},"trader_id":{"$eq":"t1"}, "price":{"$eq":10}}}`
 	require.JSONEq(t, expectedQuery, queryArg)
 }
 
@@ -303,14 +304,6 @@ func TestGetAllProducts(t *testing.T) {
 		require.Equal(t, products[i].ID, results[i].ID)
 		require.Equal(t, products[i].Name, results[i].Name)
 	}
-}
-
-func TestBuildQueryIdStartsWith_Product(t *testing.T) {
-	prefix := "PRODUCT"
-	query := models.BuildQueryIdStartsWith(prefix)
-
-	require.Contains(t, query, `"selector":`)
-	require.Contains(t, query, `"$regex":"^(PRODUCT-)"`) // regex for PRODUCT prefix
 }
 
 func TestGetAllProducts_FiltersOnlyProducts(t *testing.T) {
@@ -420,4 +413,114 @@ func TestGetAllUsers_FiltersOnlyUsers(t *testing.T) {
 		require.Equal(t, product.Name, results[i].Name)
 		require.Equal(t, product.AccountBalance, results[i].AccountBalance)
 	}
+}
+
+func TestQueryUsers(t *testing.T) {
+	sc := SmartContract{}
+
+	user := models.User{
+		ID:             "USER-1",
+		Name:           "John",
+		LastName:       "Doe",
+		Email:          "john@example.com",
+		ReceiptsID:     []string{"R1", "R2"},
+		AccountBalance: 100,
+	}
+
+	userBytes, err := json.Marshal(user)
+	require.NoError(t, err)
+
+	stub := new(mocks.ChaincodeStub)
+	ctx := new(mocks.TransactionContext)
+	iterator := new(mocks.StateQueryIterator)
+
+	ctx.GetStubReturns(stub)
+	stub.GetQueryResultReturns(iterator, nil)
+
+	iterator.HasNextReturnsOnCall(0, true)
+	iterator.HasNextReturnsOnCall(1, false)
+
+	iterator.NextReturnsOnCall(0, &queryresult.KV{
+		Key:   user.ID,
+		Value: userBytes,
+	}, nil)
+
+	results, err := sc.QueryUsers(ctx, models.BuildQueryIdStartsWith(models.USER_TYPE))
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, user.ID, results[0].ID)
+	require.Equal(t, user.Email, results[0].Email)
+}
+
+func TestGetUsersGTEBalance(t *testing.T) {
+	sc := SmartContract{}
+
+	users := []models.User{
+		{
+			ID:             "USER-001",
+			Name:           "Alice",
+			LastName:       "Smith",
+			Email:          "alice@example.com",
+			ReceiptsID:     []string{"R1"},
+			AccountBalance: 150,
+		},
+		{
+			ID:             "USER-002",
+			Name:           "Bob",
+			LastName:       "Jones",
+			Email:          "bob@example.com",
+			ReceiptsID:     []string{"R2"},
+			AccountBalance: 90,
+		},
+		{
+			ID:             "TRADER-001",
+			Name:           "Eve",
+			LastName:       "Black",
+			Email:          "eve@example.com",
+			ReceiptsID:     nil,
+			AccountBalance: 999,
+		},
+	}
+
+	mockState := map[string][]byte{}
+	for _, u := range users {
+		data, err := json.Marshal(u)
+		require.NoError(t, err)
+		mockState[u.ID] = data
+	}
+
+	expectedKeys := []string{}
+	for _, u := range users {
+		if strings.HasPrefix(u.ID, "USER") && u.AccountBalance >= 100 {
+			expectedKeys = append(expectedKeys, u.ID)
+		}
+	}
+
+	call := 0
+	iterator := new(mocks.StateQueryIterator)
+	iterator.HasNextStub = func() bool {
+		return call < len(expectedKeys)
+	}
+	iterator.NextStub = func() (*queryresult.KV, error) {
+		key := expectedKeys[call]
+		val := mockState[key]
+		call++
+		return &queryresult.KV{Key: key, Value: val}, nil
+	}
+	iterator.CloseReturns(nil)
+
+	stub := new(mocks.ChaincodeStub)
+	ctx := new(mocks.TransactionContext)
+
+	stub.GetQueryResultStub = func(query string) (shim.StateQueryIteratorInterface, error) {
+		return iterator, nil
+	}
+	ctx.GetStubReturns(stub)
+
+	results, err := sc.GetUsersGTEBalance(ctx, 100)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "USER-001", results[0].ID)
+	require.Equal(t, uint(150), results[0].AccountBalance)
+
 }

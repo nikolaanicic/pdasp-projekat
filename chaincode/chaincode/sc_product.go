@@ -4,6 +4,7 @@ import (
 	"chaincode/models"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
@@ -38,10 +39,20 @@ func (sc *SmartContract) GetAllProducts(ctx contractapi.TransactionContextInterf
 }
 
 func (sc *SmartContract) QueryProducts(ctx contractapi.TransactionContextInterface, filters map[string]string) ([]*models.Product, error) {
-	selector := make(map[string]map[string]string)
+	selector := make(map[string]interface{})
 
 	for key, value := range filters {
-		selector[key] = map[string]string{"$eq": value}
+		// Ako je filter za cenu, koristi numeričko poređenje
+		if key == "price" {
+			priceVal, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid price value: %v", err)
+			}
+			selector["price"] = map[string]interface{}{"$eq": priceVal}
+		} else {
+			// Za ostale koristi direktno poređenje
+			selector[key] = map[string]interface{}{"$eq": value}
+		}
 	}
 
 	query := map[string]interface{}{

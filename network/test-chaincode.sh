@@ -62,6 +62,8 @@ successln "Testing chaincode on tradechannel1"
 sleep 1
 
 
+
+
 infoln "Testing users"
 invoke_function DeleteUser raw u1
 USER_JSON='{"id":"u1","name":"Alice","last_name":"Alicee","email":"a@gmail.com","receipts_ids":[],"account_balance":100}'
@@ -70,6 +72,14 @@ query_function ReadUser u1
 
 query_function GetAllUsers
 
+
+infoln "Testing rich queries"
+QUERY_JSON='{"price":"2"}'
+invoke_function QueryProducts json "$QUERY_JSON"  
+
+query_function GetUsersGTEBalance 100
+query_function SearchUsersByLastName Alicee
+query_function SearchUsersByName Alice
 
 
 infoln "Testing products"
@@ -80,6 +90,7 @@ query_function ReadProduct pppp1
 
 invoke_function BuyProduct raw pppp1 u1
 query_function GetAllProducts
+query_function ReadUser u1
 
 
 
@@ -91,6 +102,9 @@ invoke_function CreateTrader json "$TRADER_JSON"
 
 query_function GetAllTraders
 query_function ReadTrader tt111
+
+infoln "Testing receipts"
+query_function GetAllReceips
  
 successln "Success: $successNum"
 warnln "Failed: $failNum"
